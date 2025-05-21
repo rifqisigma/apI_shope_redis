@@ -103,7 +103,7 @@ func (r *shopRepo) GetMyStore(userId uint) (*dto.StoreAndProduct, error) {
 	jsonData, _ := json.Marshal(response)
 	err = r.redis.Set(ctx, key, jsonData, 20*time.Minute).Err()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("redis: %v", err)
 	}
 
 	return &response, nil
@@ -130,7 +130,7 @@ func (r *shopRepo) GetAllStore() ([]dto.JustStore, error) {
 
 	jsonData, _ := json.Marshal(shops)
 	if err := r.redis.Set(ctx, key, jsonData, 15*time.Minute).Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("redis: %v", err)
 	}
 
 	return shops, nil
@@ -189,13 +189,13 @@ func (r *shopRepo) CreateProduct(req *dto.CreateProductReq) error {
 			"created_at": newProduct.CreatedAt,
 		})
 		pipe.Expire(ctx, key, 30*time.Minute)
+		pipe.Del(ctx, "products:all")
 		return nil
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("redis: %v", err)
 	}
 
-	r.redis.Del(ctx, "products:all")
 	return nil
 }
 
@@ -213,14 +213,13 @@ func (r *shopRepo) UpdateProduct(req *dto.UpdateProductReq) error {
 			"name", req.Name,
 			"stock", req.Stock,
 		)
-		pipe.Expire(ctx, key, 30*time.Minute)
+		pipe.Del(ctx, "products:all")
 		return nil
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("redis: %v", err)
 	}
 
-	r.redis.Del(ctx, "products:all")
 	return nil
 }
 
@@ -239,8 +238,14 @@ func (r *shopRepo) DeleteProduct(id uint) error {
 
 	key := fmt.Sprintf("product:%d", id)
 
-	r.redis.HDel(ctx, key)
-	r.redis.Del(ctx, "products:all")
+	_, err := r.redis.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.HDel(ctx, key)
+		pipe.Del(ctx, "products:all")
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("redis: %v", err)
+	}
 
 	return nil
 }
@@ -308,7 +313,9 @@ func (r *shopRepo) GetAllProduct() ([]dto.Product, error) {
 	}
 
 	jsonData, _ := json.Marshal(result)
-	r.redis.Set(ctx, "products:all", jsonData, 30*time.Minute)
+	if err := r.redis.Set(ctx, "products:all", jsonData, 30*time.Minute); err != nil {
+		return nil, fmt.Errorf("redis: %v", err)
+	}
 
 	fmt.Println("data dari mysql")
 	return result, nil
@@ -341,7 +348,7 @@ func (r *shopRepo) CreateCartItem(req *dto.CreateCartItemReq) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("redis: %v", err)
 	}
 
 	return nil
@@ -353,15 +360,18 @@ func (r *shopRepo) UpdateAmountCartItem(req *dto.UpdateAmountCartItemReq) error 
 	}
 
 	key := fmt.Sprintf("user:%d:cartitem:%d:", req.UserID, req.ID)
-	_, err := r.redis.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.HSet(ctx, key,
-			"purchase_amount", req.PurchaseAmount,
-		)
-		pipe.Expire(ctx, key, 30*time.Minute)
-		return nil
-	})
-	if err != nil {
-		return err
+	exists, err := r.redis.Exists(ctx, key).Result()
+	if err == nil && exists != 0 {
+		_, err := r.redis.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.HSet(ctx, key,
+				"purchase_amount", req.PurchaseAmount,
+			)
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("redis: %v", err)
+		}
+
 	}
 
 	return nil
@@ -375,23 +385,26 @@ func (r *shopRepo) UpdatePaidCartItem(req *dto.UpdatePaidCartItemReq) error {
 	key := fmt.Sprintf("user:%d:cartitem:%d:", req.UserID, req.ID)
 	keyQueque := fmt.Sprintf("behind:pending:buy:%d", req.ID)
 	message := fmt.Sprintf("pembelian product dengan id %v /n total item %v", req.ProductID, req.PurchaseAmount)
-	_, err := r.redis.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.HSet(ctx, key,
-			"purchase_amount", req.PurchaseAmount,
-			"is_paid", true,
-		)
-		pipe.Expire(ctx, key, 30*time.Minute)
-		pipe.HSet(ctx, keyQueque, map[string]interface{}{
-			"id":      req.ID,
-			"email":   req.Email,
-			"message": message,
-			"op":      "buy",
+
+	exists, err := r.redis.Exists(ctx, key).Result()
+	if err == nil && exists != 0 {
+		_, err := r.redis.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.HSet(ctx, key,
+				"purchase_amount", req.PurchaseAmount,
+				"is_paid", true,
+			)
+			pipe.HSet(ctx, keyQueque, map[string]interface{}{
+				"id":      req.ID,
+				"email":   req.Email,
+				"message": message,
+				"op":      "buy",
+			})
+			pipe.Expire(ctx, keyQueque, 10*time.Minute)
+			return nil
 		})
-		pipe.Expire(ctx, keyQueque, 10*time.Minute)
-		return nil
-	})
-	if err != nil {
-		return err
+		if err != nil {
+			return fmt.Errorf("redis: %v", err)
+		}
 	}
 
 	return nil
@@ -412,7 +425,7 @@ func (r *shopRepo) DeleteCartItem(userId, id uint) error {
 	})
 
 	if err != nil {
-		return err
+		return fmt.Errorf("redis: %v", err)
 	}
 
 	return nil
@@ -468,7 +481,7 @@ func (r *shopRepo) GetMyCartItems(userId uint) ([]dto.CartItem, error) {
 	}
 
 	if len(items) == 0 {
-		return nil, fmt.Errorf("user %d does not have any cart items", userId)
+		return nil, helper.ErrUnavaible
 	}
 
 	fmt.Println("data dari mysql (fallback)")

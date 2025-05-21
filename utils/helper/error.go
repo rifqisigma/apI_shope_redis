@@ -11,4 +11,5 @@ var (
 	//shop
 	ErrNotAdmin       = errors.New("kau bukan admin")
 	ErrStocknotEnough = errors.New("stock tidak cukup")
+	ErrUnavaible      = errors.New("hasil memang tidak ada")
 )

@@ -322,8 +322,14 @@ func (h *ShopHandler) GetMyCartItems(w http.ResponseWriter, r *http.Request) {
 
 	response, err := h.shopUsecase.GetMyCartItems(claims.UserID)
 	if err != nil {
-		helper.WriteError(w, http.StatusInternalServerError, err.Error())
-		return
+		switch err {
+		case helper.ErrUnavaible:
+			helper.WriteError(w, http.StatusOK, "kau belum ada cart items")
+			return
+		default:
+			helper.WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
 	helper.WriteJSON(w, http.StatusOK, response)
@@ -354,8 +360,14 @@ func (h *ShopHandler) CreateCartItem(w http.ResponseWriter, r *http.Request) {
 	req.UserID = claims.UserID
 	req.ProductID = uint(paramsProductId)
 	if err := h.shopUsecase.CreateCartItem(&req); err != nil {
-		helper.WriteError(w, http.StatusInternalServerError, err.Error())
-		return
+		switch err {
+		case helper.ErrStocknotEnough:
+			helper.WriteError(w, http.StatusBadRequest, "stock tak cukup")
+			return
+		default:
+			helper.WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
 	helper.WriteJSON(w, http.StatusOK, nil)
@@ -388,8 +400,15 @@ func (h *ShopHandler) UpdateAmountCartItem(w http.ResponseWriter, r *http.Reques
 	req.ID = uint(paramsCartItemId)
 	req.ProductID = uint(paramsProductId)
 	if err := h.shopUsecase.UpdateAmountCartItem(&req); err != nil {
-		helper.WriteError(w, http.StatusInternalServerError, err.Error())
-		return
+		switch err {
+		case helper.ErrStocknotEnough:
+			helper.WriteError(w, http.StatusBadRequest, "stock tak cukup")
+			return
+		default:
+			helper.WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
 	}
 
 	helper.WriteJSON(w, http.StatusOK, nil)
@@ -422,8 +441,15 @@ func (h *ShopHandler) UpdatePaidCartItem(w http.ResponseWriter, r *http.Request)
 	req.ID = uint(paramsId)
 	req.ProductID = uint(paramsProductId)
 	if err := h.shopUsecase.UpdatePaidCartItem(&req); err != nil {
-		helper.WriteError(w, http.StatusInternalServerError, err.Error())
-		return
+		switch err {
+		case helper.ErrStocknotEnough:
+			helper.WriteError(w, http.StatusBadRequest, "stock tak cukup")
+			return
+		default:
+			helper.WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
 	}
 
 	helper.WriteJSON(w, http.StatusOK, nil)
